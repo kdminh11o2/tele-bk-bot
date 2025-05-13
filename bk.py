@@ -563,32 +563,35 @@ async def handle_position_selection(update: Update, context: ContextTypes.DEFAUL
         except BadRequest:
             logger.debug("Cannot delete message.")
         
-        if callback_data[1] == 'to_logo':
+        if callback_data[1] == 'to-logo':
             logger.info(f"User selected back to logo for group_id={group_id}")
             context.user_data['media_groups'][group_id]['logo_choice'] = None
             context.user_data['media_groups'][group_id]['logo_display'] = None
             context.user_data['media_groups'][group_id]['logo_asked'] = False
             await ask_for_logo(context.bot, context.user_data['media_groups'][group_id]['chat_id'], group_id, include_back=True)
-        elif callback_data[1] == 'to_position':
+        elif callback_data[1] == 'to-position':
             logger.info(f"User selected back to position for group_id={group_id}")
             logo_choice = context.user_data['media_groups'][group_id]['logo_choice']
             await ask_for_position(context.bot, context.user_data['media_groups'][group_id]['chat_id'], group_id, logo_choice, include_back=True)
         return
     
-    if callback_data[0] == 'pos' and callback_data[1] == 'center' and callback_data[2] == 'custom':
-        try:
-            await query.message.delete()
-        except BadRequest:
-            logger.debug("Cannot delete position selection message.")
-        
-        group_id = callback_data[3]
-        logo_type = callback_data[4].split('.')[0]
+    if callback_data[0] == 'pos' and callback_data[1] == 'center':
+        group_id = callback_data[2]
+        logo_type = callback_data[3].split('.')[0]
         
         if 'media_groups' not in context.user_data or group_id not in context.user_data['media_groups']:
             logger.error(f"No media group found for group_id={group_id} in handle_position_selection")
             await query.message.reply_text("No images to process, please send images again!")
             cleanup(context)
             return
+        
+        try:
+            await query.message.delete()
+        except BadRequest:
+            logger.debug("Cannot delete position selection message.")
+        
+        context.user_data['media_groups'][group_id]['position'] = 'center'
+        context.user_data['media_groups'][group_id]['position_display'] = "Ở giữa ảnh - độ mờ tùy chỉnh"
         
         logger.info(f"Asking for opacity selection for group_id={group_id}, logo={logo_type}")
         await ask_for_opacity(context.bot, context.user_data['media_groups'][group_id]['chat_id'], group_id, logo_type, include_back=True)
@@ -614,7 +617,7 @@ async def handle_position_selection(update: Update, context: ContextTypes.DEFAUL
         except BadRequest:
             logger.debug("Cannot delete opacity selection message.")
         
-        position = 'center'
+        position = context.user_data['media_groups'][group_id]['position']
         logo_choice = context.user_data['media_groups'][group_id]['logo_choice']
         logger.info(f"Selected logo_choice: {logo_choice}, position: {position}, opacity: {opacity} for group_id={group_id}")
         
@@ -692,8 +695,9 @@ async def handle_position_selection(update: Update, context: ContextTypes.DEFAUL
             del context.user_data['media_groups'][group_id]
         if not context.user_data['media_groups']:
             cleanup(context)
+        return
     
-    # Xử lý các vị trí khác (không phải center custom)
+    # Xử lý các vị trí khác (không phải center)
     group_id = callback_data[2]
     
     if 'media_groups' not in context.user_data or group_id not in context.user_data['media_groups']:
@@ -836,7 +840,7 @@ def main():
             application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_media))
             application.add_handler(CallbackQueryHandler(handle_crop_selection, pattern='^crop_'))
             application.add_handler(CallbackQueryHandler(handle_logo_selection, pattern='^(logo_|back_to_crop_)'))
-            application.add_handler(CallbackQueryHandler(handle_position_selection, pattern='^(pos_|back_to_logo_)'))
+            application.add_handler(CallbackQueryHandler(handle_position_selection, pattern='^(pos_|opacity_|back_to_logo_|back_to_position_)'))
             application.add_error_handler(error_handler)            
             application.run_polling()
         except Conflict as e:
