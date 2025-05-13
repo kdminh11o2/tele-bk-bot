@@ -666,9 +666,19 @@ def main():
             logger.error(f"Logo file does not exist: {logo_path}. Bot will stop.")
             return
     
+    # Lấy token từ biến môi trường
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        logger.error("Không tìm thấy TELEGRAM_TOKEN trong biến môi trường.")
+        return
+    
+    # Khởi động FastAPI trong thread riêng
+    fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
+    fastapi_thread.start()
+    
     while True:
         try:
-            application = Application.builder().token("7578007087:AAFls4RPI-11y8q8uZr2Wxjd-wfbZIqI33g").base_url('http://127.0.0.1:8081/bot').read_timeout(300).write_timeout(300).build()
+            application = Application.builder().token(token).build()
             
             application.add_handler(CommandHandler("start", start))
             application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_media))
