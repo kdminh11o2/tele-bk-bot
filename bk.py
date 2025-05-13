@@ -235,6 +235,8 @@ def process_image(input_path, logo_paths, output_path, crop_type='square', logo_
                     target_logo_area = img_area * 0.035  # 3.5% for kenh14.png
                 elif 'AI.png' in logo_path:
                     target_logo_area = img_area * 0.025  # 2.5% for AI.png
+                elif 'gd.png' in logo_path:
+                    target_logo_area = img_area * 0.012  # 1.2% for gd.png
                 else:
                     target_logo_area = img_area * 0.036  # 3.6% for disoi.png
                 
@@ -380,6 +382,7 @@ async def ask_for_logo(bot, chat_id, group_id, include_back=False):
     keyboard = [
         [InlineKeyboardButton("Logo Đi soi sao đi", callback_data=f"logo_disoi_{group_id}")],
         [InlineKeyboardButton("Logo Kenh14", callback_data=f"logo_kenh14_{group_id}")],
+        [InlineKeyboardButton("Logo G-Dragon x K14", callback_data=f"logo_gd_{group_id}")],
         [InlineKeyboardButton("Logo \"ảnh tạo bởi AI\"", callback_data=f"logo_ai_{group_id}")]
     ]
     if include_back:
@@ -399,7 +402,7 @@ async def ask_for_position(bot, chat_id, group_id, logo_type, include_back=False
         [InlineKeyboardButton("Góc trên - phải", callback_data=f"pos_top-right_{group_id}_{logo_type}.png")],
         [InlineKeyboardButton("Góc dưới - trái", callback_data=f"pos_bottom-left_{group_id}_{logo_type}.png")],
         [InlineKeyboardButton("Góc dưới - phải", callback_data=f"pos_bottom-right_{group_id}_{logo_type}.png")],
-        [InlineKeyboardButton("Ở giữa ảnh - mờ 60%", callback_data=f"pos_center_{group_id}_{logo_type}.png")],
+        [InlineKeyboardButton("Ở giữa ảnh - độ mờ tùy chỉnh", callback_data=f"pos_center_{group_id}_{logo_type}.png")],
         [InlineKeyboardButton("Giữa - Phía trên", callback_data=f"pos_middle-top_{group_id}_{logo_type}.png")],
         [InlineKeyboardButton("Giữa - Phía dưới", callback_data=f"pos_middle-bottom_{group_id}_{logo_type}.png")]
     ]
@@ -411,6 +414,23 @@ async def ask_for_position(bot, chat_id, group_id, logo_type, include_back=False
     await bot.send_message(
         chat_id=chat_id,
         text="CHỌN VỊ TRÍ LOGO:",
+        reply_markup=reply_markup
+    )
+
+async def ask_for_opacity(bot, chat_id, group_id, logo_type, include_back=False):
+    keyboard = [
+        [InlineKeyboardButton("Độ mờ 65%", callback_data=f"opacity_0.65_{group_id}_{logo_type}.png")],
+        [InlineKeyboardButton("Độ mờ 75%", callback_data=f"opacity_0.75_{group_id}_{logo_type}.png")],
+        [InlineKeyboardButton("Độ mờ 85%", callback_data=f"opacity_0.85_{group_id}_{logo_type}.png")],
+        [InlineKeyboardButton("Nét 100%", callback_data=f"opacity_1.0_{group_id}_{logo_type}.png")]
+    ]
+    if include_back:
+        keyboard.append([InlineKeyboardButton("Quay về", callback_data=f"back_to_position_{group_id}")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await bot.send_message(
+        chat_id=chat_id,
+        text="CHỌN MỨC ĐỘ MỜ CHO LOGO Ở GIỮA:",
         reply_markup=reply_markup
     )
 
@@ -506,6 +526,7 @@ async def handle_logo_selection(update: Update, context: ContextTypes.DEFAULT_TY
             "Logo Đi soi sao đi" if logo_choice == 'disoi' else
             "Logo Kenh14" if logo_choice == 'kenh14' else
             "Logo \"ảnh tạo bởi AI\"" if logo_choice == 'ai' else
+            "Logo G-Dragon x K14" if logo_choice == 'gd' else 
             "Unknown logo"
         )
         
@@ -523,32 +544,156 @@ async def handle_position_selection(update: Update, context: ContextTypes.DEFAUL
     logger.info(f"Received position selection callback: {query.data}, user_data_keys={list(context.user_data.get('media_groups', {}).keys())}")
     
     callback_data = query.data.split('_')
-    if len(callback_data) < 4 or callback_data[0] != 'pos':
-        if callback_data[0] == 'back':
-            group_id = callback_data[-1]
-            if 'media_groups' not in context.user_data or group_id not in context.user_data['media_groups']:
-                logger.error(f"No media group found for group_id={group_id} in handle_position_selection")
-                await query.message.reply_text("No images to process, please send images again!")
-                cleanup(context)
-                return
-            
-            try:
-                await query.message.delete()
-            except BadRequest:
-                logger.debug("Cannot delete position selection message.")
-            
+    if len(callback_data) < 2 or callback_data[0] not in ['pos', 'opacity', 'back']:
+        logger.error(f"Invalid callback data: {query.data}")
+        await query.message.reply_text("Invalid selection!")
+        cleanup(context)
+        return
+    
+    if callback_data[0] == 'back':
+        group_id = callback_data[-1]
+        if 'media_groups' not in context.user_data or group_id not in context.user_data['media_groups']:
+            logger.error(f"No media group found for group_id={group_id} in handle_position_selection")
+            await query.message.reply_text("No images to process, please send images again!")
+            cleanup(context)
+            return
+        
+        try:
+            await query.message.delete()
+        except BadRequest:
+            logger.debug("Cannot delete message.")
+        
+        if callback_data[1] == 'to_logo':
             logger.info(f"User selected back to logo for group_id={group_id}")
             context.user_data['media_groups'][group_id]['logo_choice'] = None
             context.user_data['media_groups'][group_id]['logo_display'] = None
             context.user_data['media_groups'][group_id]['logo_asked'] = False
             await ask_for_logo(context.bot, context.user_data['media_groups'][group_id]['chat_id'], group_id, include_back=True)
-            return
-        
-        logger.error(f"Invalid position callback data: {query.data}")
-        await query.message.reply_text("Invalid position selection!")
-        cleanup(context)
+        elif callback_data[1] == 'to_position':
+            logger.info(f"User selected back to position for group_id={group_id}")
+            logo_choice = context.user_data['media_groups'][group_id]['logo_choice']
+            await ask_for_position(context.bot, context.user_data['media_groups'][group_id]['chat_id'], group_id, logo_choice, include_back=True)
         return
     
+    if callback_data[0] == 'pos' and callback_data[1] == 'center' and callback_data[2] == 'custom':
+        try:
+            await query.message.delete()
+        except BadRequest:
+            logger.debug("Cannot delete position selection message.")
+        
+        group_id = callback_data[3]
+        logo_type = callback_data[4].split('.')[0]
+        
+        if 'media_groups' not in context.user_data or group_id not in context.user_data['media_groups']:
+            logger.error(f"No media group found for group_id={group_id} in handle_position_selection")
+            await query.message.reply_text("No images to process, please send images again!")
+            cleanup(context)
+            return
+        
+        logger.info(f"Asking for opacity selection for group_id={group_id}, logo={logo_type}")
+        await ask_for_opacity(context.bot, context.user_data['media_groups'][group_id]['chat_id'], group_id, logo_type, include_back=True)
+        return
+    
+    if callback_data[0] == 'opacity':
+        group_id = callback_data[2]
+        logo_type = callback_data[3].split('.')[0]
+        opacity = float(callback_data[1])
+        
+        if 'media_groups' not in context.user_data or group_id not in context.user_data['media_groups']:
+            logger.error(f"No media group found for group_id={group_id} in handle_position_selection")
+            await query.message.reply_text("No images to process, please send images again!")
+            cleanup(context)
+            return
+        
+        if context.user_data['media_groups'][group_id].get('processed', False):
+            logger.info(f"Ignoring duplicate callback for group_id={group_id}")
+            return
+        
+        try:
+            await query.message.delete()
+        except BadRequest:
+            logger.debug("Cannot delete opacity selection message.")
+        
+        position = 'center'
+        logo_choice = context.user_data['media_groups'][group_id]['logo_choice']
+        logger.info(f"Selected logo_choice: {logo_choice}, position: {position}, opacity: {opacity} for group_id={group_id}")
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(script_dir, 'Logo', f"{logo_choice}.png")
+        logo_paths = [logo_path]
+        logo_positions = [position]
+        opacities = [opacity]
+        
+        position_display = f"Ở giữa - mờ {int(opacity * 100)}%"
+        context.user_data['media_groups'][group_id]['position_display'] = position_display
+        
+        selections = (
+            "Bạn đã chọn:\n"
+            f"- {context.user_data['media_groups'][group_id]['crop_display']}\n"
+            f"- {context.user_data['media_groups'][group_id]['logo_display']}\n"
+            f"- {context.user_data['media_groups'][group_id]['position_display']}"
+        )
+        await query.message.reply_text(selections)
+        
+        wait_message = await query.message.reply_text("Chờ trong giây lát...")
+        
+        for img_data in context.user_data['media_groups'][group_id]['images']:
+            logger.info(f"Downloading image file to {img_data['input_path']}")
+            download_start = time.time()
+            try:
+                await img_data['file'].download_to_drive(img_data['input_path'])
+            except Exception as e:
+                logger.error(f"Error downloading image file: {e}")
+                await query.message.reply_text("Error downloading image file. Please try again!")
+                cleanup(context)
+                return
+            logger.info(f"Download took {time.time() - download_start:.2f} seconds")
+        
+        crop_type = context.user_data['media_groups'][group_id].get('crop_type', 'square')
+        
+        async def process_and_send_image(img_data):
+            input_path = img_data['input_path']
+            output_path = img_data['output_path']
+            output_filename = img_data['output_filename']
+            
+            process_start = time.time()
+            success, error_message = process_image(
+                input_path,
+                logo_paths,
+                output_path,
+                crop_type,
+                logo_positions,
+                opacities,
+                logo_choice=logo_choice
+            )
+            if success:
+                logger.info(f"Image processing took {time.time() - process_start:.2f} seconds")
+                send_start = time.time()
+                with open(output_path, 'rb') as output_file:
+                    await query.message.reply_document(document=output_file, filename=output_filename)
+                logger.info(f"Sending file took {time.time() - send_start:.2f} seconds")
+                return True
+            else:
+                await query.message.reply_text(f"Error processing image {output_filename}: {error_message}")
+                return False
+        
+        logger.info(f"Processing images for group_id={group_id} with logo {logo_choice} at position {position} with opacity {opacity}")
+        tasks = [process_and_send_image(img_data) for img_data in context.user_data['media_groups'][group_id]['images']]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        context.user_data['media_groups'][group_id]['processed'] = all(result is True for result in results if not isinstance(result, Exception))
+        
+        try:
+            await wait_message.delete()
+        except BadRequest:
+            logger.debug("Cannot delete wait message.")
+        
+        logger.info(f"Finished processing group_id={group_id}, cleaning up")
+        if group_id in context.user_data['media_groups']:
+            del context.user_data['media_groups'][group_id]
+        if not context.user_data['media_groups']:
+            cleanup(context)
+    
+    # Xử lý các vị trí khác (không phải center custom)
     group_id = callback_data[2]
     
     if 'media_groups' not in context.user_data or group_id not in context.user_data['media_groups']:
@@ -574,14 +719,13 @@ async def handle_position_selection(update: Update, context: ContextTypes.DEFAUL
     logo_path = os.path.join(script_dir, 'Logo', f"{logo_choice}.png")
     logo_paths = [logo_path]
     logo_positions = [position]
-    opacities = [0.5 if position == 'center' else 1.0]
+    opacities = [1.0]  # Mặc định opacity 1.0 cho các vị trí không phải center
     
     position_display = (
         "Góc trên - trái" if position == 'top-left' else
         "Góc trên - phải" if position == 'top-right' else
         "Góc dưới - trái" if position == 'bottom-left' else
         "Góc dưới - phải" if position == 'bottom-right' else
-        "Ở giữa - mờ" if position == 'center' else
         "Giữa - Phía trên" if position == 'middle-top' else
         "Giữa - Phía dưới" if position == 'middle-bottom' else
         "Unknown position"
@@ -668,7 +812,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    logo_files = ['kenh14.png', 'disoi.png', 'AI.png'] 
+    logo_files = ['kenh14.png', 'disoi.png', 'AI.png', 'gd.png']
     logo_dir = os.path.join(script_dir, 'Logo')
     for logo in logo_files:
         logo_path = os.path.join(logo_dir, logo)
