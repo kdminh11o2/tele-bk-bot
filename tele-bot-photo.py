@@ -10,6 +10,21 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram.error import BadRequest, Conflict
 from PIL import Image, ImageEnhance
 import pillow_heif
+from fastapi import FastAPI
+import uvicorn
+import threading
+
+# Tạo ứng dụng FastAPI
+app = FastAPI()
+
+# Endpoint giả để giữ cổng mở
+@app.get("/")
+async def root():
+    return {"message": "Telegram bot is running"}
+
+# Hàm chạy FastAPI trong một thread riêng
+def run_fastapi():
+    uvicorn.run(app, host="0.0.0.0", port=8080)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
