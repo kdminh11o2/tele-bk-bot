@@ -14,16 +14,21 @@ from fastapi import FastAPI, Request
 import uvicorn
 import threading
 
+# Khởi tạo FastAPI
 app = FastAPI()
 
-# Endpoint để kiểm tra trạng thái
+# Biến toàn cục để lưu Application
+application = None
+
+# Endpoint kiểm tra trạng thái
 @app.get("/")
 async def root():
     return {"message": "Telegram bot is running"}
 
-# Endpoint để nhận cập nhật từ Telegram
+# Endpoint webhook
 @app.post("/webhook")
-async def webhook(request: Request, application: Application = None):
+async def webhook(request: Request):
+    global application
     try:
         update = Update.de_json(await request.json(), application.bot)
         await application.process_update(update)
@@ -43,10 +48,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Hàm process_image (giữ nguyên)
 def process_image(input_path, logo_paths, output_path, crop_type='square', logo_positions=None, opacities=None, logo_choice=None):
     try:
         logger.info(f"Processing image: input={input_path}, logos={logo_paths}, output={output_path}, crop={crop_type}, positions={logo_positions}, opacities={opacities}, logo_choice={logo_choice}")
-        
         if not os.path.exists(input_path):
             logger.error(f"Input image file does not exist: {input_path}")
             return False, "Input image file does not exist."
@@ -242,13 +247,13 @@ def process_image(input_path, logo_paths, output_path, crop_type='square', logo_
                 logo = Image.open(logo_path).convert('RGBA')
                 
                 if 'kenh14.png' in logo_path:
-                    target_logo_area = img_area * 0.035  # 3.5% for kenh14.png
+                    target_logo_area = img_area * 0.035
                 elif 'AI.png' in logo_path:
-                    target_logo_area = img_area * 0.025  # 2.5% for AI.png
+                    target_logo_area = img_area * 0.025
                 elif 'gd.png' in logo_path:
-                    target_logo_area = img_area * 0.012  # 1.2% for gd.png
+                    target_logo_area = img_area * 0.012
                 else:
-                    target_logo_area = img_area * 0.036  # 3.6% for disoi.png
+                    target_logo_area = img_area * 0.036
                 
                 logger.info(f"Logo: {logo_path}, Target Area: {target_logo_area}, Position: {logo_position}")
                 
@@ -294,6 +299,7 @@ def process_image(input_path, logo_paths, output_path, crop_type='square', logo_
         logger.error(f"Unknown error processing image: {e}")
         return False, f"Unknown error: {str(e)}"
 
+# Các hàm xử lý Telegram (giữ nguyên)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Tôi là AI chỉnh sửa ảnh. Hãy gửi hoặc chuyển tiếp ảnh, tôi sẽ xử lý theo yêu cầu của bạn!\n"
@@ -707,7 +713,6 @@ async def handle_position_selection(update: Update, context: ContextTypes.DEFAUL
             cleanup(context)
         return
     
-    # Xử lý các vị trí khác (không phải center)
     group_id = callback_data[2]
     
     if 'media_groups' not in context.user_data or group_id not in context.user_data['media_groups']:
@@ -733,7 +738,7 @@ async def handle_position_selection(update: Update, context: ContextTypes.DEFAUL
     logo_path = os.path.join(script_dir, 'Logo', f"{logo_choice}.png")
     logo_paths = [logo_path]
     logo_positions = [position]
-    opacities = [1.0]  # Mặc định opacity 1.0 cho các vị trí không phải center
+    opacities = [1.0]
     
     position_display = (
         "Góc trên - trái" if position == 'top-left' else
@@ -824,7 +829,11 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("An error occurred. Please try again later!")
     cleanup(context)
 
+def run_fastapi():
+    uvicorn.run(app, host="0.0.0.0", port=8080, forwarded_allow_ips="*")
+
 def main():
+    global application
     # Kiểm tra logo files
     script_dir = os.path.dirname(os.path.abspath(__file__))
     logo_files = ['kenh14.png', 'disoi.png', 'AI.png', 'gd.png']
@@ -862,14 +871,14 @@ def main():
             logger.error(f"Failed to set webhook: {str(e)}")
             raise
 
-    # Khởi động FastAPI trong một thread riêng
-    fastapi_thread = threading.Thread(target=run_fastapi, args=(application,), daemon=True)
-    fastapi_thread.start()
-
     # Chạy thiết lập webhook
     loop = asyncio.get_event_loop()
     try:
+        loop.run_until_complete(application.initialize())  # Khởi tạo application
         loop.run_until_complete(set_webhook())
+        # Khởi động FastAPI trong một thread riêng
+        fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
+        fastapi_thread.start()
         # Giữ chương trình chạy
         loop.run_forever()
     except KeyboardInterrupt:
