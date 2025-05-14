@@ -299,7 +299,7 @@ def process_image(input_path, logo_paths, output_path, crop_type='square', logo_
         logger.error(f"Unknown error processing image: {e}")
         return False, f"Unknown error: {str(e)}"
 
-# Các hàm xử lý Telegram (giữ nguyên)
+# Các hàm xử lý Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Tôi là AI chỉnh sửa ảnh. Hãy gửi hoặc chuyển tiếp ảnh, tôi sẽ xử lý theo yêu cầu của bạn!\n"
@@ -307,6 +307,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def initialize_temp_dir(context):
+    if context is None or context.user_data is None:
+        logger.warning("Context or user_data is None in initialize_temp_dir")
+        return
     if 'temp_dir' in context.user_data:
         shutil.rmtree(context.user_data['temp_dir'], ignore_errors=True)
     context.user_data['temp_dir'] = tempfile.mkdtemp()
@@ -819,12 +822,18 @@ async def handle_position_selection(update: Update, context: ContextTypes.DEFAUL
         cleanup(context)
 
 def cleanup(context: ContextTypes.DEFAULT_TYPE):
+    if context is None or context.user_data is None:
+        logger.warning("Context or user_data is None in cleanup")
+        return
     if 'temp_dir' in context.user_data:
         shutil.rmtree(context.user_data['temp_dir'], ignore_errors=True)
     context.user_data.clear()
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
+    if isinstance(context.error, Exception) and "Conflict: can't use getUpdates method while webhook is active" in str(context.error):
+        logger.info("Ignoring getUpdates conflict error as webhook is active")
+        return
     if update and update.message and not context.user_data.get('processed', False):
         await update.message.reply_text("An error occurred. Please try again later!")
     cleanup(context)
@@ -851,8 +860,8 @@ def main():
         logger.error("Không tìm thấy TELEGRAM_TOKEN hoặc WEBHOOK_URL trong biến môi trường.")
         return
 
-    # Khởi tạo Application
-    application = Application.builder().token(token).build()
+    # Khởi tạo Application với webhook rõ ràng
+    application = Application.builder().token(token).updater(None).build()  # Tắt updater để không dùng polling
 
     # Thêm các handler
     application.add_handler(CommandHandler("start", start))
@@ -865,6 +874,7 @@ def main():
     # Thiết lập webhook
     async def set_webhook():
         try:
+            await application.bot.delete_webhook()  # Xóa webhook cũ nếu có
             await application.bot.set_webhook(url=webhook_url)
             logger.info(f"Webhook set to {webhook_url}")
         except Exception as e:
