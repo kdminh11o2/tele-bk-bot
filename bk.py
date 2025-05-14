@@ -7,22 +7,32 @@ import asyncio
 from logging.handlers import RotatingFileHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from telegram.error import BadRequest, Conflict
+from telegram.error import BadRequest
 from PIL import Image, ImageEnhance
 import pillow_heif
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 import uvicorn
 import threading
 
 app = FastAPI()
 
+# Endpoint để kiểm tra trạng thái
 @app.get("/")
 async def root():
     return {"message": "Telegram bot is running"}
 
-def run_fastapi():
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+# Endpoint để nhận cập nhật từ Telegram
+@app.post("/webhook")
+async def webhook(request: Request, application: Application = None):
+    try:
+        update = Update.de_json(await request.json(), application.bot)
+        await application.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error processing webhook update: {str(e)}")
+        return {"status": "error"}
 
+# Cấu hình logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -815,6 +825,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cleanup(context)
 
 def main():
+    # Kiểm tra logo files
     script_dir = os.path.dirname(os.path.abspath(__file__))
     logo_files = ['kenh14.png', 'disoi.png', 'AI.png', 'gd.png']
     logo_dir = os.path.join(script_dir, 'Logo')
@@ -823,33 +834,54 @@ def main():
         if not os.path.exists(logo_path):
             logger.error(f"Logo file does not exist: {logo_path}. Bot will stop.")
             return
-    
+
+    # Lấy token và webhook URL từ biến môi trường
     token = os.getenv("TELEGRAM_TOKEN")
-    if not token:
-        logger.error("Không tìm thấy TELEGRAM_TOKEN trong biến môi trường.")
+    webhook_url = os.getenv("WEBHOOK_URL")
+    if not token or not webhook_url:
+        logger.error("Không tìm thấy TELEGRAM_TOKEN hoặc WEBHOOK_URL trong biến môi trường.")
         return
-    
-    fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
-    fastapi_thread.start()
-    
-    while True:
+
+    # Khởi tạo Application
+    application = Application.builder().token(token).build()
+
+    # Thêm các handler
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_media))
+    application.add_handler(CallbackQueryHandler(handle_crop_selection, pattern='^crop_'))
+    application.add_handler(CallbackQueryHandler(handle_logo_selection, pattern='^(logo_|back_to_crop_)'))
+    application.add_handler(CallbackQueryHandler(handle_position_selection, pattern='^(pos_|opacity_|back_to_logo_|back_to_position_)'))
+    application.add_error_handler(error_handler)
+
+    # Thiết lập webhook
+    async def set_webhook():
         try:
-            application = Application.builder().token(token).build()
-            
-            application.add_handler(CommandHandler("start", start))
-            application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_media))
-            application.add_handler(CallbackQueryHandler(handle_crop_selection, pattern='^crop_'))
-            application.add_handler(CallbackQueryHandler(handle_logo_selection, pattern='^(logo_|back_to_crop_)'))
-            application.add_handler(CallbackQueryHandler(handle_position_selection, pattern='^(pos_|opacity_|back_to_logo_|back_to_position_)'))
-            application.add_error_handler(error_handler)            
-            application.run_polling()
-        except Conflict as e:
-            logger.error(f"Lỗi Conflict: {str(e)}. Thử khởi động lại sau 5 giây...")
-            time.sleep(5)
-            continue
+            await application.bot.set_webhook(url=webhook_url)
+            logger.info(f"Webhook set to {webhook_url}")
         except Exception as e:
-            logger.error(f"Lỗi khi khởi động bot: {str(e)}")
+            logger.error(f"Failed to set webhook: {str(e)}")
             raise
+
+    # Khởi động FastAPI trong một thread riêng
+    fastapi_thread = threading.Thread(target=run_fastapi, args=(application,), daemon=True)
+    fastapi_thread.start()
+
+    # Chạy thiết lập webhook
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(set_webhook())
+        # Giữ chương trình chạy
+        loop.run_forever()
+    except KeyboardInterrupt:
+        logger.info("Received shutdown signal, stopping bot...")
+        loop.run_until_complete(application.bot.delete_webhook())
+        loop.run_until_complete(application.stop())
+        loop.close()
+    except Exception as e:
+        logger.error(f"Error in main loop: {str(e)}")
+        loop.run_until_complete(application.bot.delete_webhook())
+        loop.run_until_complete(application.stop())
+        loop.close()
 
 if __name__ == '__main__':
     main()
